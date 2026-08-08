@@ -1,0 +1,25 @@
+# ── COMPANY DATA — NEVER COMMIT ────────────────────────────────────
+# Written before the folder has anything in it, on purpose.
+data/company/
+*.xlsx
+*.xls
+
+# Regenerated from code, so not worth committing
+data/synthetic/
+data/public/*.csv
+data/public/*.zip
+
+# Model artifacts
+models/
+reports/
+
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+
+.env
+.DS_Store

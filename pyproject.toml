@@ -1,0 +1,51 @@
+[project]
+name = "paybands"
+version = "0.1.0"
+description = "Salary band prediction for the Indian market, with fairness auditing"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = ["pydantic>=2.9", "pyyaml>=6.0", "typer>=0.15", "rich>=13.9"]
+
+[project.optional-dependencies]
+# scipy belongs here rather than in `model`: fairness/ and plots/ need it for
+# confidence intervals, and those are analysis, not modelling. Installing
+# --extra data without --extra model must not ImportError.
+data = [
+    "pandas>=2.2",
+    "pyarrow>=18.0",
+    "numpy>=2.0",
+    "matplotlib>=3.11.1",
+    "scipy>=1.14",
+]
+model = ["lightgbm>=4.5", "scikit-learn>=1.6"]
+# shap is separate: its transitive llvmlite pin conflicts with py3.12 in some
+# resolutions, and it is only needed in Phase 6. Do not fold it back into model.
+# numba is pinned explicitly: shap depends on it, and left free the resolver
+# picks numba 0.53 (Python <3.10 only) and the whole install fails. Pinning a
+# modern numba forces a resolution that supports 3.12.
+explain = ["shap>=0.46", "numba>=0.60"]
+api = ["fastapi>=0.115", "uvicorn>=0.32"]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/paybands"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
