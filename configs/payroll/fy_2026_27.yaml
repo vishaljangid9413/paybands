@@ -1,0 +1,105 @@
+# Payroll rules for Financial Year 2026-27 (India)
+#
+# VERIFIED 2026-08-08 against an actual payslip PDF (year 2):
+#
+#   BASIC 51,000 + HRA 25,500 + SPECIAL 23,500 = gross 1,00,000
+#   − PF 1,800 − Medical 350                     = net   97,850   ✓ exact
+#   CTC 1,01,800 = gross 1,00,000 + employer PF 1,800             ✓ exact
+#   Annual: gross 12,00,000 → standard ded. 75,000 → taxable 11,25,000
+#           → total tax nil                                       ✓ matches
+#           the payslip's own TDS block
+#   YTD lines (Apr–Jul) reconcile on BASIC, HRA, SPECIAL and PF.
+#
+# WHY THIS FILE EXISTS SEPARATELY from fy_2025_26.yaml: the salary changed
+# between the two years, so the basic fraction and the medical premium differ.
+# The 2025-26 file is left untouched so the year 1 payslip keeps reconciling
+# against its own year, which is the whole point of one file per financial year.
+
+financial_year: "2026-27"
+regime: new
+source: "https://incometax.gov.in — SLABS NOT YET VERIFIED FOR THIS YEAR"
+verified_on: "2026-08-08"
+verified_against: "payslip PDF, year 2: gross 1,00,000 = 51,000 basic + 25,500 HRA + 23,500 special; PF 1,800; medical 350; net 97,850; CTC 1,01,800"
+
+# ── Provident Fund ──────────────────────────────────────────────────
+provident_fund:
+  employee_rate: 0.12
+
+  # 51,000 basic of 1,00,000 gross.
+  basic_as_fraction_of_gross: 0.51
+
+  # THE CEILING IS STILL ₹15,000, AND STILL BINDING.
+  #
+  #   PF deducted = ₹1,800 = 12% × ₹15,000, exactly as in year 1.
+  #   12% of the actual ₹51,000 basic would be ₹6,120.
+  #
+  # An earlier version of this file set the ceiling to ₹30,000, to accommodate a
+  # verbally reported "PF is ₹3,600". That was wrong, and this payslip shows why:
+  # the slip prints "PF 1,800" under Deductions and "PFEmpr 1,800" separately.
+  # ₹3,600 is the total landing in the PF account — employee plus employer — not
+  # the amount deducted from pay. Only ₹1,800 leaves the salary.
+  #
+  # Both figures are real and both matter. ₹1,800 determines take-home; ₹3,600 is
+  # what the employee's retirement balance grows by. They answer different
+  # questions and neither is "the PF".
+  apply_statutory_ceiling: true
+  statutory_ceiling_monthly: 15000
+
+  employer_matches: true
+
+# ── Insurance / Medical ─────────────────────────────────────────────
+# ₹350/month on the year 2 slip (was ₹300 in year 1).
+# The YTD line implies the premium changed part-way through the year. Only the
+# current rate is modelled; a monthly-varying premium is not worth the
+# complexity for a swing of a few tens of rupees.
+insurance:
+  monthly_premium: 350
+
+# ── Professional tax ────────────────────────────────────────────────
+# The payslip's Profession Tax line is blank; this state does not levy it.
+professional_tax:
+  enabled: false
+  monthly_amount: 200
+
+# ── Income tax (new regime) ─────────────────────────────────────────
+#
+# ⚠️ CARRIED FORWARD FROM FY 2025-26 AND NOT VERIFIED FOR THIS YEAR.
+#
+#   The slabs below were verified against the Income Tax Department's page for
+#   **AY 2026-27**, which assesses income earned in **FY 2025-26** — last year,
+#   not this one. FY 2026-27 income is assessed in **AY 2027-28**, whose slabs
+#   were set by Budget 2026.
+#
+#   AY and FY are offset by one. Mixing them up is the most common mistake made
+#   with Indian tax data.
+#
+#   It happens not to matter here: taxable income is ₹11,25,000, and the 87A
+#   rebate zeroes the tax under any plausible slab table. The payslip agrees —
+#   Total Tax is blank. But it would matter a great deal above ~₹12.75L gross.
+#
+#   ACTION: check the AY 2027-28 page and correct this block.
+income_tax:
+  standard_deduction: 75000
+
+  slabs:
+    - { upto: 400000, rate: 0.00 }
+    - { upto: 800000, rate: 0.05 }
+    - { upto: 1200000, rate: 0.10 }
+    - { upto: 1600000, rate: 0.15 }
+    - { upto: 2000000, rate: 0.20 }
+    - { upto: 2400000, rate: 0.25 }
+    - { upto: null, rate: 0.30 }
+
+  surcharge:
+    - { above: 5000000, rate: 0.10 }
+    - { above: 10000000, rate: 0.15 }
+    - { above: 20000000, rate: 0.25 }
+    - { above: 50000000, rate: 0.25 }
+
+  marginal_relief: true
+
+  rebate_87a:
+    taxable_income_threshold: 1200000
+    max_rebate: 60000
+
+  cess_rate: 0.04
