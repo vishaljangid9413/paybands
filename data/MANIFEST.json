@@ -1,0 +1,17 @@
+{
+  "note": "Provenance for files under data/. The files themselves are gitignored (large, not ours, reproducible); this record is committed so any published number can be traced to exact bytes. Regenerate with: uv run python scripts/fetch_data.py",
+  "datasets": [
+    {
+      "name": "Stack Overflow Developer Survey 2025",
+      "filename": "so_2025_raw.csv",
+      "path": "data/public/so_2025_raw.csv",
+      "url": "https://github.com/StackExchange/Survey/raw/refs/heads/main/packages/archive/2025/results.csv",
+      "licence": "ODbL 1.0",
+      "why": "49,191 responses; 1,022 usable Indian salary rows after cleaning",
+      "bytes": 140893245,
+      "sha256": "2d1f65308877282edfb4470520eabbc08cb499118432a3dcec6a66c086aa2baa",
+      "first_fetched": "2026-08-09",
+      "last_checked": "2026-08-09"
+    }
+  ]
+}

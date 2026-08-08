@@ -1,0 +1,12 @@
+{
+  "name": "paybands-ui-checks",
+  "private": true,
+  "type": "module",
+  "description": "DOM-level checks for the served page. Kept in this repo, installed here, so nothing lands outside the project tree.",
+  "scripts": {
+    "check": "node check_ui.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}

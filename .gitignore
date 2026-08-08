@@ -13,6 +13,11 @@ data/public/*.zip
 models/
 reports/
 
+# Node modules for the UI checks. Installed INTO tests/ui/ rather than
+# globally, so `rm -rf` on this repo leaves nothing behind on the machine.
+tests/ui/node_modules/
+tests/ui/package-lock.json
+
 .venv/
 __pycache__/
 *.py[cod]
