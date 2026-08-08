@@ -117,6 +117,21 @@
     margin: 0 0 14px; padding: 9px 12px; border-radius: 7px; font-size: 12.5px;
     background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af;
   }
+  /* Checkbox grid rather than a multi-select: the model's strongest signal on
+     survey data was, until now, the one input the form never asked for. It has
+     to be impossible to miss. */
+  .skills {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px;
+    max-height: 168px; overflow-y: auto; padding: 8px 10px; margin-bottom: 6px;
+    border: 1px solid var(--line); border-radius: 6px; background: #fff;
+  }
+  .skills label {
+    display: flex; align-items: center; gap: 6px; margin: 0;
+    font-size: 12.5px; color: var(--ink); cursor: pointer; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .skills input { width: auto; margin: 0; accent-color: var(--accent); }
+  .hint { display: block; margin-top: 5px; font-size: 11.5px; color: var(--muted); line-height: 1.45; }
   .notes { margin-top: 10px; }
   .notes li { margin-bottom: 7px; font-size: 13px; color: var(--warn-ink); }
   .err { background: #fef2f2; border: 1px solid #fca5a5; color: #b91c1c; }
@@ -169,6 +184,15 @@
       <select id="remote"><option value="">— not given —</option></select>
     </label>
 
+    <label><span>Skills <small id="skillcount" style="font-weight:400">— none selected</small></span>
+      <div class="skills" id="skills"></div>
+      <input type="text" id="skills_other" placeholder="other skills, comma-separated (AWS, Docker…)" />
+      <small class="hint">
+        Only the listed ones have their own learned effect. Anything you type still
+        raises your skill <i>count</i>, which the model does use.
+      </small>
+    </label>
+
     <label><span>Current salary, if any (annual ₹) — for compa-ratio</span>
       <input type="number" id="actual_salary" placeholder="e.g. 1200000" min="0" step="10000" />
     </label>
@@ -203,7 +227,7 @@
       <div class="card note" id="caveat"></div>
 
       <div class="card note warn hidden" id="notescard">
-        <b>Inputs that did nothing</b>
+        <b>What the model could not use</b>
         <ul class="notes" id="notes"></ul>
       </div>
 
@@ -316,6 +340,7 @@
     for (const id of SCHEMA.inert_fields || []) {
       if ($(id)) markInert(id, SCHEMA.trained_on);
     }
+    buildSkills(SCHEMA.known_skills || []);
 
     // Pick a sensible default for role so the first render is not empty, but
     // only from what actually exists in this bundle.
@@ -332,12 +357,43 @@
       (width ? ` · typical band width ${(width * 100).toFixed(0)}% of midpoint` : "") + ".";
   }
 
+  function buildSkills(vocabulary) {
+    const box = $("skills");
+    if (!vocabulary.length) {
+      box.innerHTML = `<small class="hint">This model learned no skill flags.</small>`;
+      return;
+    }
+    box.innerHTML = vocabulary.map((s) => {
+      const v = escapeHtml(s);
+      return `<label title="${v}"><input type="checkbox" value="${v}" />${v}</label>`;
+    }).join("");
+    box.addEventListener("change", countSkills);
+    $("skills_other").addEventListener("input", countSkills);
+  }
+
+  function chosenSkills() {
+    const boxes = [...$("skills").querySelectorAll("input:checked")].map((i) => i.value);
+    const typed = $("skills_other").value.split(",").map((s) => s.trim()).filter(Boolean);
+    return [...new Set([...boxes, ...typed])];
+  }
+
+  function countSkills() {
+    const n = chosenSkills().length;
+    $("skillcount").textContent = n ? `— ${n} selected` : "— none selected";
+  }
+
   function candidate() {
     const c = { years_experience: parseFloat($("years_experience").value) };
     for (const k of ["role", "city", "prev_company_type", "level", "education", "org_size", "remote"]) {
       const v = $(k).value.trim();
       if (v) c[k] = v;                 // omit rather than send "" — the model has a
     }                                  // learned response to missing, and "" is not it
+
+    // Send skills only when some were chosen. An empty list is not "unknown" —
+    // the model reads it as a person with zero skills, which is a real and very
+    // negative signal, and not what an untouched form means.
+    const skills = chosenSkills();
+    if (skills.length) c.skills = skills;
     return c;
   }
 
@@ -428,7 +484,20 @@
 
       // `notes` is where the API says what it quietly could not do. Dropping it
       // would turn an honest response into a confident-looking one.
-      const notes = d.notes || [];
+      const notes = [...(d.notes || [])];
+
+      // The model has no "skills unknown" state: omitting the field and sending
+      // an empty list both reach it as n_skills = 0, and zero skills is a real,
+      // strongly negative signal rather than a shrug. Leaving that unsaid means
+      // a user who simply did not fill the box reads a badly low number as the
+      // model's opinion of them, which is the opposite of what happened.
+      if (!c.skills) {
+        notes.unshift(
+          "No skills were given, and the model cannot tell that apart from having none — " +
+          "it scored you as a person who listed zero skills, which pushes the estimate " +
+          "down hard. Tick your skills above and re-run before reading anything into this."
+        );
+      }
       $("notes").innerHTML = notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("");
       $("notescard").classList.toggle("hidden", notes.length === 0);
 

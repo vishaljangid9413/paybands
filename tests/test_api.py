@@ -45,9 +45,13 @@ with warnings.catch_warnings():
     warnings.filterwarnings("ignore", message="Using `httpx` with `starlette.testclient`")
     from fastapi.testclient import TestClient
 
+import numpy as np
+
 from paybands.api import models as api_models
 from paybands.api import service
 from paybands.api.app import app
+from paybands.data import synthetic
+from paybands.data.schema import TARGET
 from paybands.model.band import COMPA_ABOVE_BAND, COMPA_BELOW_BAND, compa_label
 from paybands.payroll.calculator import compute_payslip
 
@@ -74,6 +78,51 @@ KNOWN_CANDIDATE: dict[str, object] = {
 @pytest.fixture(scope="module")
 def bundle() -> service.ModelBundle:
     return service.train_bundle(n_synthetic=TRAIN_ROWS, seed=42)
+
+
+@pytest.fixture(scope="module")
+def skilled_bundle() -> service.ModelBundle:
+    """A bundle that can actually use `skills`, which the synthetic one cannot.
+
+    The synthetic generator emits no skills column, so `skills` is its single
+    inert field and the default `bundle` fixture is useless for testing skill
+    behaviour. The real survey model does use them — heavily — but the survey
+    CSV is gitignored, so a test that loaded it would pass here and fail in CI.
+
+    So: take the synthetic frame and bolt a skills column onto it, with a real
+    pay effect. This is not a claim about the market. It exists so the skill
+    code path is exercised by a frame that is checked into version control.
+    """
+    df, _ = synthetic.generate(n=TRAIN_ROWS, seed=42)
+    rng = np.random.default_rng(42)
+    pool = ["python", "sql", "java", "javascript", "go", "rust"]
+    picks = [
+        rng.choice(pool, size=rng.integers(0, 4), replace=False).tolist() for _ in range(len(df))
+    ]
+    df = df.assign(skills=[";".join(p) for p in picks])
+    # Pay a premium per skill so the model has something real to find. Without
+    # this the flags would be pure noise and "a skill moves the number" would
+    # be testing randomness.
+    df[TARGET] = df[TARGET] * (1.0 + 0.12 * np.array([len(p) for p in picks]))
+    return service.train_bundle(df, label="synthetic + skills (test fixture)")
+
+
+@pytest.fixture
+def skilled_client(skilled_bundle, rules):
+    """Function-scoped, and it RESTORES the singleton — see `unhealthy_client`.
+
+    The bundle is module-scoped because training it is the expensive part, but
+    the client must not be: two module-scoped fixtures both swapping the global
+    service means whichever runs second owns it for the rest of the file. That
+    is the same defect `unhealthy_client` documents, and it came straight back
+    the moment a second client fixture was added — which is why the swap-and-
+    restore now appears in every fixture that touches the singleton.
+    """
+    previous = service._service
+    service.set_service(service.PredictionService(bundle=skilled_bundle, rules=rules))
+    with TestClient(app) as test_client:
+        yield test_client
+    service.set_service(previous)
 
 
 @pytest.fixture(scope="module")
@@ -198,6 +247,39 @@ def test_schema_splits_fields_into_usable_and_inert(client, bundle):
     assert set(usable) | set(inert) == set(service.CANDIDATE_FIELD_SOURCE)
     assert not set(usable) & set(inert)
     assert set(usable) == set(bundle.usable_fields)
+
+
+def test_schema_publishes_the_skill_vocabulary(skilled_client, skilled_bundle):
+    """The form cannot offer skills it does not know the spelling of.
+
+    On survey data this is the model's strongest single input — supplying one
+    recognised skill moves the midpoint by more than half — so a form that
+    could not ask for it was quietly scoring every candidate as having none.
+    """
+    known = skilled_client.get("/schema").json()["known_skills"]
+    assert known == skilled_bundle.known_skills
+    assert known, "a model with an empty skill vocabulary cannot use `skills` at all"
+
+
+def test_omitted_skills_are_read_as_zero_not_unknown(skilled_client):
+    """Pins a limitation rather than a feature, deliberately.
+
+    `skills: null` and `skills: []` reach the model identically, as
+    `n_skills = 0`. There is no "unknown" state. That is worth a test because
+    the UI's warning about it is only correct while this stays true — if a
+    later change gives missing skills their own encoding, this test fails and
+    the warning gets rewritten instead of quietly becoming a lie.
+    """
+    base = {"years_experience": 4.0, "role": "Backend"}
+
+    def midpoint(candidate):
+        return skilled_client.post("/predict-band", json={"candidate": candidate}).json()["band"][
+            "midpoint"
+        ]
+
+    assert midpoint(base) == midpoint(base | {"skills": []})
+    # And a real skill has to actually move it, or the warning is pointless.
+    assert midpoint(base | {"skills": ["python"]}) != midpoint(base)
 
 
 def test_schema_is_503_without_a_model(unhealthy_client):

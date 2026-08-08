@@ -240,6 +240,20 @@ class ModelBundle:
         builder = getattr(self.band.model, "builder", None)
         return dict(getattr(builder, "category_levels_", {}))
 
+    @property
+    def known_skills(self) -> list[str]:
+        """The top-N skill vocabulary counted on the training rows only.
+
+        Published for the same reason as `known_categories`, and it matters more
+        here: a skill outside this list gets no flag of its own. It still raises
+        `n_skills`, so it is not thrown away, but the model has no learned
+        response to *that particular* skill. A caller who can see the list knows
+        which of their skills the model actually recognises.
+        """
+        builder = getattr(self.band.model, "builder", None)
+        skills = getattr(builder, "skills", None)
+        return [str(s) for s in getattr(skills, "vocabulary_", ())]
+
     def to_info(self) -> api_models.ModelInfo:
         return api_models.ModelInfo(
             version=self.version,

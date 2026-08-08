@@ -148,6 +148,11 @@ def schema() -> dict:
         "categories": {
             k: [str(v) for v in vals] for k, vals in svc.bundle.known_categories.items()
         },
+        # Skills are not a category column — they become one binary flag each —
+        # so they need their own key. This is the model's single strongest
+        # signal on survey data, which is exactly why it has to be offerable in
+        # the form rather than left to a caller who guesses the spelling.
+        "known_skills": svc.bundle.known_skills,
         "holdout_relative_width": svc.bundle.holdout_relative_width,
         "holdout_coverage": svc.bundle.holdout_coverage,
     }
