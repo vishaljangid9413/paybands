@@ -26,11 +26,18 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Response, status
+from fastapi.responses import FileResponse, HTMLResponse
 
 from . import models as api_models
-from .service import ModelNotLoaded, PredictionService, get_service
+from .service import (
+    CANDIDATE_FIELD_SOURCE,
+    ModelNotLoaded,
+    PredictionService,
+    get_service,
+)
 
 _MODEL_UNAVAILABLE = (
     "No model is loaded. The service starts without one on purpose so it can be "
@@ -108,3 +115,60 @@ def compa_ratio(request: api_models.CompaRatioRequest) -> api_models.CompaRatioR
         return _service().compa_ratio(request)
     except ModelNotLoaded as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, _MODEL_UNAVAILABLE) from exc
+
+
+@app.get("/schema", include_in_schema=True)
+def schema() -> dict:
+    """What the LOADED model can actually use, so a caller cannot ask it
+    something it has no answer for.
+
+    The form on `/` builds itself from this rather than from a hard-coded list.
+    That matters because the category labels differ per training source — the
+    survey says "1,000 to 4,999 employees" where the synthetic generator says
+    "1001-5000" — and a form offering the wrong vocabulary produces inputs the
+    model has never seen, silently.
+
+    `inert_fields` is the honest half: fields the API accepts and the model
+    ignores, because its training data never carried them.
+    """
+    # `_service()` hands back the singleton whether or not a model loaded — the
+    # prediction endpoints raise ModelNotLoaded from *inside* the call. This one
+    # only reads attributes, so it has to check for itself; without this it
+    # returns 500 on an AttributeError on a fresh clone, which reads as "the
+    # server is broken" rather than "nothing has been trained yet".
+    svc = _service()
+    if not svc.is_ready:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, _MODEL_UNAVAILABLE)
+
+    usable = list(svc.bundle.usable_fields)
+    return {
+        "trained_on": svc.bundle.trained_on,
+        "usable_fields": usable,
+        "inert_fields": [f for f in CANDIDATE_FIELD_SOURCE if f not in usable],
+        "categories": {
+            k: [str(v) for v in vals] for k, vals in svc.bundle.known_categories.items()
+        },
+        "holdout_relative_width": svc.bundle.holdout_relative_width,
+        "holdout_coverage": svc.bundle.holdout_coverage,
+    }
+
+
+# ─────────────────────────────────────────────── the browser UI
+
+
+#: The single-file UI. No build step, no bundler, no CDN — it works offline and
+#: cannot break because a third party moved a URL.
+_UI_FILE = Path(__file__).parent / "static" / "index.html"
+
+
+@app.get("/", include_in_schema=False, response_class=HTMLResponse)
+def ui() -> FileResponse:
+    """Serve the estimator page.
+
+    Served from the API itself rather than as a separate front end, so the page
+    calls `/predict-band` on its own origin — no CORS configuration, no second
+    process to run, and no chance of the UI drifting onto a stale API.
+
+    Excluded from the OpenAPI schema: it is a page, not part of the contract.
+    """
+    return FileResponse(_UI_FILE, media_type="text/html")

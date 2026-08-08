@@ -1,0 +1,479 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>paybands — salary band estimator</title>
+
+<!--
+  Served by FastAPI at "/" so it calls /predict-band and /compa-ratio on the
+  same origin. No build step, no dependencies, no external requests: one file
+  that works offline and cannot break because a CDN moved.
+
+  THE DESIGN DECISION THAT MATTERS: the band is drawn on an axis that starts at
+  ZERO, not at the band's own lower edge. Scaled to its own range, every band
+  looks equally confident. Scaled from zero, a band spanning 67% of its own
+  midpoint visibly eats half the chart — which is the honest picture and the
+  whole point of this project.
+-->
+
+<style>
+  :root {
+    --ink: #16181d;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --bg: #fbfbfc;
+    --card: #ffffff;
+    --accent: #2563eb;
+    --warn-bg: #fff7ed;
+    --warn-line: #fdba74;
+    --warn-ink: #9a3412;
+    --ok-bg: #f0fdf4;
+    --ok-line: #86efac;
+    --ok-ink: #166534;
+    --up: #2563eb;
+    --down: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header { padding: 28px 24px 18px; border-bottom: 1px solid var(--line); background: var(--card); }
+  header h1 { margin: 0 0 6px; font-size: 21px; letter-spacing: -0.01em; }
+  header p { margin: 0; color: var(--muted); max-width: 70ch; font-size: 14px; }
+  main { display: grid; grid-template-columns: 330px 1fr; gap: 22px; padding: 22px; align-items: start; max-width: 1280px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+  .card + .card { margin-top: 16px; }
+  .card h2 { margin: 0 0 14px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+
+  label { display: block; margin-bottom: 12px; font-size: 13px; color: var(--muted); }
+  label span { display: block; margin-bottom: 4px; }
+  input, select {
+    width: 100%; padding: 8px 10px; font: inherit; font-size: 14px; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 6px; background: #fff;
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+  button {
+    width: 100%; padding: 10px; font: inherit; font-weight: 600; color: #fff;
+    background: var(--accent); border: 0; border-radius: 6px; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .55; cursor: progress; }
+
+  /* ---- the band chart ---- */
+  .axis { position: relative; height: 66px; margin: 26px 0 8px; }
+  .track { position: absolute; top: 26px; left: 0; right: 0; height: 12px; background: #eef1f5; border-radius: 6px; }
+  .band {
+    position: absolute; top: 22px; height: 20px; border-radius: 5px;
+    background: linear-gradient(90deg, #bfdbfe, #60a5fa, #bfdbfe);
+    border: 1px solid #3b82f6;
+  }
+  .mid { position: absolute; top: 14px; width: 2px; height: 36px; background: #1d4ed8; }
+  .actual { position: absolute; top: 8px; width: 2px; height: 48px; background: #dc2626; }
+  .tick { position: absolute; top: 48px; font-size: 11px; color: var(--muted); transform: translateX(-50%); white-space: nowrap; }
+  .tick.edge { transform: none; }
+  .caption { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  .big { font-size: 25px; font-weight: 650; letter-spacing: -0.02em; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 14px; }
+  .row + .row { border-top: 1px dashed var(--line); }
+  .row .k { color: var(--muted); }
+  .row .v { font-variant-numeric: tabular-nums; }
+
+  .note { border-radius: 8px; padding: 12px 14px; font-size: 13.5px; line-height: 1.5; }
+  .note.warn { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-ink); }
+  .note.ok { background: var(--ok-bg); border: 1px solid var(--ok-line); color: var(--ok-ink); }
+  .note b { font-weight: 700; }
+
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; }
+  .pill.below { background: #fef2f2; color: #b91c1c; }
+  .pill.inband { background: var(--ok-bg); color: var(--ok-ink); }
+  .pill.above { background: #eff6ff; color: #1d4ed8; }
+
+  /* ---- contributions ---- */
+  .contrib { display: grid; grid-template-columns: 1fr 92px 62px; gap: 8px; align-items: center; padding: 5px 0; font-size: 13.5px; }
+  .contrib + .contrib { border-top: 1px dashed var(--line); }
+  .bar { height: 9px; border-radius: 3px; }
+  .bar.up { background: var(--up); }
+  .bar.down { background: var(--down); }
+  .amt { text-align: right; font-variant-numeric: tabular-nums; font-size: 12.5px; }
+
+  footer { padding: 6px 24px 34px; color: var(--muted); font-size: 12px; max-width: 1280px; }
+  code { background: #f1f3f6; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  .hidden { display: none; }
+
+  /* A field the loaded model cannot use. Dimmed and badged rather than removed:
+     the point is for the reader to SEE that the model has a blind spot, not to
+     have it quietly tidied away. Left enabled on purpose, so filling it in and
+     getting the "had no effect" note teaches the lesson directly. */
+  label.inert { opacity: .55; }
+  .badge-inert {
+    display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px;
+    background: #fef3c7; color: #92400e; font-size: 10.5px; font-weight: 700;
+    letter-spacing: .03em; text-transform: uppercase; vertical-align: middle;
+  }
+  .trained {
+    margin: 0 0 14px; padding: 9px 12px; border-radius: 7px; font-size: 12.5px;
+    background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af;
+  }
+  .notes { margin-top: 10px; }
+  .notes li { margin-bottom: 7px; font-size: 13px; color: var(--warn-ink); }
+  .err { background: #fef2f2; border: 1px solid #fca5a5; color: #b91c1c; }
+</style>
+
+<header>
+  <h1>paybands — salary band estimator</h1>
+  <p>
+    Predicts a <b>range</b>, not a number. The bar below is drawn from zero, so how much
+    the model does <i>not</i> know is visible rather than hidden.
+  </p>
+</header>
+
+<main>
+  <form id="f" class="card" autocomplete="off">
+    <h2>Candidate</h2>
+    <div class="trained" id="trained">loading model…</div>
+
+    <label><span>Years of professional experience</span>
+      <input type="number" id="years_experience" value="5" min="0" max="50" step="0.5" required />
+    </label>
+
+    <label><span>Role</span>
+      <select id="role">
+        <option value="">— not given —</option>
+      </select>
+    </label>
+
+    <label><span>City</span>
+      <input type="text" id="city" placeholder="Bangalore, Pune, Jaipur…" value="Pune" />
+    </label>
+
+    <label><span>Previous company type</span>
+      <select id="prev_company_type"><option value="">— not given —</option></select>
+    </label>
+
+    <label><span>Internal level</span>
+      <select id="level"><option value="">— not given —</option></select>
+    </label>
+
+    <label><span>Education</span>
+      <select id="education"><option value="">— not given —</option></select>
+    </label>
+
+    <label><span>Company size</span>
+      <select id="org_size"><option value="">— not given —</option></select>
+    </label>
+
+    <label><span>Work arrangement</span>
+      <select id="remote"><option value="">— not given —</option></select>
+    </label>
+
+    <label><span>Current salary, if any (annual ₹) — for compa-ratio</span>
+      <input type="number" id="actual_salary" placeholder="e.g. 1200000" min="0" step="10000" />
+    </label>
+
+    <button type="submit" id="go">Estimate band</button>
+  </form>
+
+  <section>
+    <div id="err" class="card note err hidden"></div>
+
+    <div id="out" class="hidden">
+      <div class="card">
+        <h2>Estimated band <span id="cov" style="text-transform:none;letter-spacing:0"></span></h2>
+        <div class="big" id="range">—</div>
+        <div class="caption" id="midline"></div>
+
+        <div class="axis" id="axis">
+          <div class="track"></div>
+          <div class="band" id="bandbar"></div>
+          <div class="mid" id="midmark"></div>
+          <div class="actual hidden" id="actmark"></div>
+          <div class="tick edge" style="left:0">₹0</div>
+          <div class="tick edge" id="tickmax" style="right:0"></div>
+          <div class="tick" id="ticklo"></div>
+          <div class="tick" id="tickhi"></div>
+        </div>
+        <div class="caption">
+          Axis starts at zero on purpose. A band scaled to its own edges always looks confident.
+        </div>
+      </div>
+
+      <div class="card note" id="caveat"></div>
+
+      <div class="card note warn hidden" id="notescard">
+        <b>Inputs that did nothing</b>
+        <ul class="notes" id="notes"></ul>
+      </div>
+
+      <div class="card hidden" id="compacard">
+        <h2>Where this salary sits</h2>
+        <div class="row"><span class="k">Entered salary</span><span class="v" id="c_actual"></span></div>
+        <div class="row"><span class="k">Compa-ratio (salary ÷ midpoint)</span><span class="v" id="c_ratio"></span></div>
+        <div class="row"><span class="k">Position</span><span class="v" id="c_pos"></span></div>
+      </div>
+
+      <div class="card">
+        <h2>Take-home at the midpoint</h2>
+        <div class="caption" style="margin-bottom:10px">
+          Computed by formula from the midpoint, never predicted. PF, insurance and tax are arithmetic.
+        </div>
+        <div class="row"><span class="k">Monthly gross</span><span class="v" id="t_gross"></span></div>
+        <div class="row"><span class="k">− Provident Fund</span><span class="v" id="t_pf"></span></div>
+        <div class="row"><span class="k">− Insurance</span><span class="v" id="t_ins"></span></div>
+        <div class="row"><span class="k">− Income tax</span><span class="v" id="t_tax"></span></div>
+        <div class="row"><span class="k"><b>Monthly take-home</b></span><span class="v"><b id="t_net"></b></span></div>
+        <div class="caption" style="margin-top:8px" id="t_fy"></div>
+      </div>
+
+      <div class="card" id="whycard">
+        <h2>Why this number</h2>
+        <div id="why"></div>
+        <div class="caption" style="margin-top:10px" id="whynote"></div>
+      </div>
+
+      <div class="card">
+        <h2>Model</h2>
+        <div class="row"><span class="k">Version</span><span class="v" id="m_ver"></span></div>
+        <div class="row"><span class="k">Trained on</span><span class="v" id="m_train"></span></div>
+        <div class="row"><span class="k">Measured coverage</span><span class="v" id="m_cov"></span></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  Endpoints: <code>POST /predict-band</code>, <code>POST /compa-ratio</code>, <code>GET /health</code>.
+  Full API docs at <a href="/docs">/docs</a>.
+</footer>
+
+<script>
+  // ---- Indian number formatting: lakhs and crores, never millions -------------
+  // A figure rendered "₹1.5M" is unreadable to the audience this is built for.
+  function inr(n) {
+    if (n == null || isNaN(n)) return "—";
+    const a = Math.abs(n), s = n < 0 ? "−" : "";
+    if (a >= 1e7) return `${s}₹${(a / 1e7).toFixed(2).replace(/\.?0+$/, "")}Cr`;
+    if (a >= 1e5) return `${s}₹${(a / 1e5).toFixed(2).replace(/\.?0+$/, "")}L`;
+    return s + "₹" + Math.round(a).toLocaleString("en-IN");
+  }
+  const rupees = (n) => "₹" + Math.round(n).toLocaleString("en-IN");
+  const $ = (id) => document.getElementById(id);
+
+  // ---- The form builds itself from the loaded model --------------------------
+  //
+  // Nothing about the fields is hardcoded here. GET /schema reports the exact
+  // category values the bundle on disk was fitted on, plus which fields that
+  // bundle can and cannot use. Two reasons this matters more than convenience:
+  //
+  //   1. Hardcoded options go stale silently. This page shipped with synthetic
+  //      org_size values ("1001-5000"); the survey-trained model uses
+  //      "1,000 to 4,999 employees". A user picking from the old list was
+  //      sending the model a category it had never seen, and getting the
+  //      model's learned response to *unknown* while believing they had
+  //      specified a company size.
+  //
+  //   2. Some fields the API accepts are inert for the loaded model — the
+  //      training data carried no values for them, so it never learned what
+  //      they mean. Those get dimmed and badged rather than hidden, because a
+  //      blind spot you can see is a fact about the model, and a blind spot you
+  //      cannot see is a lie about it.
+  const SELECTS = ["role", "prev_company_type", "level", "education", "org_size", "remote"];
+  let SCHEMA = null;
+
+  function fillOptions(id, values) {
+    const sel = $(id);
+    sel.length = 1;                                    // keep "— not given —"
+    for (const v of values) {
+      sel.insertAdjacentHTML("beforeend",
+        `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`);
+    }
+  }
+  const escapeHtml = (s) => String(s).replace(/[&<>"']/g,
+    (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+
+  function markInert(id, trainedOn) {
+    const label = $(id).closest("label");
+    if (!label || label.querySelector(".badge-inert")) return;
+    label.classList.add("inert");
+    label.querySelector("span").insertAdjacentHTML("beforeend",
+      `<span class="badge-inert" title="Trained on ${escapeHtml(trainedOn)}, which carries no values for this field.">not used</span>`);
+  }
+
+  async function loadSchema() {
+    const r = await fetch("/schema");
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(`${r.status} — ${d.detail || r.statusText}`);
+    }
+    SCHEMA = await r.json();
+
+    for (const id of SELECTS) {
+      const values = (SCHEMA.categories || {})[id];
+      if (values && values.length) fillOptions(id, values);
+    }
+    for (const id of SCHEMA.inert_fields || []) {
+      if ($(id)) markInert(id, SCHEMA.trained_on);
+    }
+
+    // Pick a sensible default for role so the first render is not empty, but
+    // only from what actually exists in this bundle.
+    const roles = (SCHEMA.categories || {}).role || [];
+    const preferred = roles.find((v) => /back[- ]?end|developer, back/i.test(v)) || roles[0];
+    if (preferred) $("role").value = preferred;
+
+    const width = SCHEMA.holdout_relative_width;
+    $("trained").innerHTML =
+      `Loaded model trained on <b>${escapeHtml(SCHEMA.trained_on)}</b>. ` +
+      `${(SCHEMA.usable_fields || []).length} of ` +
+      `${(SCHEMA.usable_fields || []).length + (SCHEMA.inert_fields || []).length} ` +
+      `candidate fields affect the prediction` +
+      (width ? ` · typical band width ${(width * 100).toFixed(0)}% of midpoint` : "") + ".";
+  }
+
+  function candidate() {
+    const c = { years_experience: parseFloat($("years_experience").value) };
+    for (const k of ["role", "city", "prev_company_type", "level", "education", "org_size", "remote"]) {
+      const v = $(k).value.trim();
+      if (v) c[k] = v;                 // omit rather than send "" — the model has a
+    }                                  // learned response to missing, and "" is not it
+    return c;
+  }
+
+  function drawBand(b, actual) {
+    // Scale from ZERO to a little past the upper edge. This is the honest scale:
+    // it shows the band's width relative to the salary itself.
+    const max = b.upper * 1.06;
+    const pct = (v) => Math.max(0, Math.min(100, (v / max) * 100));
+    const lo = pct(b.lower), hi = pct(b.upper), mid = pct(b.midpoint);
+
+    $("bandbar").style.left = lo + "%";
+    $("bandbar").style.width = Math.max(0.6, hi - lo) + "%";
+    $("midmark").style.left = mid + "%";
+    $("ticklo").style.left = lo + "%";
+    $("ticklo").textContent = inr(b.lower);
+    $("tickhi").style.left = hi + "%";
+    $("tickhi").textContent = inr(b.upper);
+    $("tickmax").textContent = inr(max);
+
+    const am = $("actmark");
+    if (actual > 0) {
+      am.classList.remove("hidden");
+      am.style.left = pct(actual) + "%";
+      am.title = "current salary " + rupees(actual);
+    } else {
+      am.classList.add("hidden");
+    }
+  }
+
+  function drawWhy(ex) {
+    if (!ex || !ex.contributions) { $("whycard").classList.add("hidden"); return; }
+    $("whycard").classList.remove("hidden");
+    const widest = Math.max(...ex.contributions.map((c) => Math.abs(c.rupees)), 1);
+    $("why").innerHTML = ex.contributions.map((c) => {
+      const up = c.rupees >= 0;
+      const w = (Math.abs(c.rupees) / widest) * 100;
+      return `<div class="contrib">
+        <div>${c.phrase}</div>
+        <div><div class="bar ${up ? "up" : "down"}" style="width:${w}%"></div></div>
+        <div class="amt" style="color:${up ? "var(--up)" : "var(--down)"}">${up ? "+" : "−"}${inr(Math.abs(c.rupees))}</div>
+      </div>`;
+    }).join("");
+    $("whynote").textContent = ex.approximation_note || "";
+  }
+
+  async function post(path, body) {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const detail = Array.isArray(data.detail)
+        ? data.detail.map((d) => `${(d.loc || []).slice(1).join(".")}: ${d.msg}`).join("; ")
+        : data.detail || r.statusText;
+      throw new Error(`${r.status} — ${detail}`);
+    }
+    return data;
+  }
+
+  $("f").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("go");
+    btn.disabled = true; btn.textContent = "Estimating…";
+    $("err").classList.add("hidden");
+    try {
+      const c = candidate();
+      const actual = parseFloat($("actual_salary").value) || 0;
+
+      const d = await post("/predict-band", { candidate: c });
+      const b = d.band;
+
+      $("range").textContent = `${rupees(b.lower)} — ${rupees(b.upper)}`;
+      $("midline").textContent =
+        `midpoint ${rupees(b.midpoint)} · width ${inr(b.width)} · ` +
+        `${(b.relative_width * 100).toFixed(0)}% of the midpoint`;
+      $("cov").textContent = `· ${(b.coverage * 100).toFixed(0)}% confidence`;
+      drawBand(b, actual);
+
+      // The caveat is a required field of the response, so it is rendered as a
+      // banner rather than fine print. A number without it is misleading.
+      const cav = $("caveat");
+      cav.className = "card note " + (d.confidence.decision_grade ? "ok" : "warn");
+      cav.innerHTML =
+        `<b>${d.confidence.decision_grade ? "Usable as a guide" : "Not decision-grade"}</b> — ` +
+        d.caveat;
+
+      // `notes` is where the API says what it quietly could not do. Dropping it
+      // would turn an honest response into a confident-looking one.
+      const notes = d.notes || [];
+      $("notes").innerHTML = notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("");
+      $("notescard").classList.toggle("hidden", notes.length === 0);
+
+      const t = d.take_home;
+      $("t_gross").textContent = rupees(t.monthly_gross);
+      $("t_pf").textContent = rupees(t.annual_pf / 12);
+      $("t_ins").textContent = rupees(t.annual_insurance / 12);
+      $("t_tax").textContent = rupees(t.annual_income_tax / 12);
+      $("t_net").textContent = rupees(t.monthly_net);
+      $("t_fy").textContent = `FY ${t.financial_year}, ${t.regime} regime.`;
+
+      drawWhy(d.explanation);
+
+      $("m_ver").textContent = d.model.version;
+      $("m_train").textContent = d.model.trained_on;
+      $("m_cov").textContent =
+        `${(d.confidence.measured_coverage * 100).toFixed(1)}% against a ${(d.confidence.nominal_coverage * 100).toFixed(0)}% promise`;
+
+      if (actual > 0) {
+        const cr = await post("/compa-ratio", { candidate: c, actual_salary: actual });
+        $("compacard").classList.remove("hidden");
+        $("c_actual").textContent = rupees(cr.actual_salary);
+        $("c_ratio").textContent = cr.compa_ratio.toFixed(3);
+        const cls = cr.position === "below band" ? "below" : cr.position === "above band" ? "above" : "inband";
+        $("c_pos").innerHTML = `<span class="pill ${cls}">${cr.position}</span>`;
+      } else {
+        $("compacard").classList.add("hidden");
+      }
+
+      $("out").classList.remove("hidden");
+    } catch (ex) {
+      $("err").textContent = ex.message;
+      $("err").classList.remove("hidden");
+    } finally {
+      btn.disabled = false; btn.textContent = "Estimate band";
+    }
+  });
+
+  // Schema first, then the first estimate — submitting before the dropdowns are
+  // populated would send an empty role and quietly misrepresent the default.
+  loadSchema()
+    .then(() => $("f").dispatchEvent(new Event("submit")))
+    .catch((ex) => {
+      $("trained").className = "trained err";
+      $("trained").textContent = "Could not load the model schema: " + ex.message;
+      $("go").disabled = true;
+    });
+</script>

@@ -97,11 +97,26 @@ def client(bundle, rules):
 
 @pytest.fixture
 def unhealthy_client(rules):
-    """A client whose model never loaded — the fresh-deployment case."""
+    """A client whose model never loaded — the fresh-deployment case.
+
+    RESTORES the previous singleton rather than clearing it. An earlier version
+    set it to None on teardown, which quietly clobbered the module-scoped
+    `client` fixture: every later test in this file then fell through to
+    whatever `models/band.pkl` happened to be on disk.
+
+    Those tests passed anyway, because the cached artifact was synthetic-trained
+    and behaved like the fixture. The day the artifact was retrained on survey
+    data — which has no city column — three city and prev_salary tests failed,
+    and the real bug turned out to be six months old.
+
+    A test that reads state from disk is a test that passes on your machine and
+    fails in CI, and this one was worse: it passed for the wrong reason.
+    """
+    previous = service._service
     service.set_service(service.PredictionService(rules=rules, load_error="no artifact on disk"))
     with TestClient(app) as test_client:
         yield test_client
-    service.set_service(None)
+    service.set_service(previous)
 
 
 def predict(client, **overrides) -> dict:
@@ -150,6 +165,78 @@ def test_health_is_503_and_honest_when_no_model_is_loaded(unhealthy_client):
     # difference between "something is broken" and "the model has not been
     # trained yet".
     assert body["payroll_financial_year"] is not None
+
+
+# ─────────────────────────────────────────────── /schema
+#
+# The browser UI builds every dropdown from this endpoint rather than shipping
+# its own list. That is not a convenience: a hardcoded list goes stale the
+# moment the model is retrained on a different source, and a user picking a
+# category the model has never seen gets the model's learned response to
+# *unknown* while believing they specified something. These tests pin the
+# contract the UI depends on.
+
+
+def test_schema_reports_the_categories_the_model_was_fitted_on(client, bundle):
+    body = client.get("/schema").json()
+    assert body["trained_on"] == bundle.trained_on
+    for column, levels in bundle.known_categories.items():
+        assert body["categories"][column] == [str(v) for v in levels]
+
+
+def test_schema_splits_fields_into_usable_and_inert(client, bundle):
+    """Every candidate field lands in exactly one bucket, and neither is a lie.
+
+    A field is inert when the training frame carried no values for it, so the
+    model never learned what it means. The UI dims those. If this endpoint ever
+    reported an inert field as usable, the UI would present a control that
+    silently does nothing — the exact failure this project exists to refuse.
+    """
+    body = client.get("/schema").json()
+    usable, inert = body["usable_fields"], body["inert_fields"]
+
+    assert set(usable) | set(inert) == set(service.CANDIDATE_FIELD_SOURCE)
+    assert not set(usable) & set(inert)
+    assert set(usable) == set(bundle.usable_fields)
+
+
+def test_schema_is_503_without_a_model(unhealthy_client):
+    """There are no categories to report when nothing is loaded.
+
+    Returning an empty schema with 200 would let the UI render a form full of
+    blank dropdowns and look healthy while being useless.
+    """
+    assert unhealthy_client.get("/schema").status_code == 503
+
+
+def test_inert_fields_are_reported_back_on_the_prediction(client):
+    """Sending an inert field must produce a note, not silence.
+
+    `/schema` warns in advance; this is the belt-and-braces check that a caller
+    who ignored it still finds out. The note names the field and the training
+    set, so "why did this input change nothing" is answerable without reading
+    the source.
+    """
+    # Which fields are inert depends on the training source, so the values have
+    # to be built from the field's own type rather than hardcoded — sending a
+    # string where `skills` wants a list gets a 422 and tests validation, not
+    # the warning.
+    placeholder = {"skills": ["a-skill-nobody-has"], "location_tier": 1}
+
+    inert = client.get("/schema").json()["inert_fields"]
+    if not inert:
+        pytest.skip("this bundle can use every field, so there is nothing to warn about")
+
+    for field in inert:
+        candidate = dict(KNOWN_CANDIDATE) | {field: placeholder.get(field, "anything at all")}
+        response = client.post("/predict-band", json={"candidate": candidate})
+        assert response.status_code == 200, f"{field}: {response.json()}"
+
+        body = response.json()
+        assert any(field in note for note in body["notes"]), f"{field} warned about nothing"
+        # The warning must not cost the caller their band. An honest service
+        # still answers; it just says what it could not use.
+        assert body["band"]["lower"] > 0
 
 
 def test_service_starts_without_an_artifact(tmp_path, rules):

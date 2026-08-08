@@ -110,6 +110,39 @@ from ..model.split import DEFAULT_SEED
 from ..payroll.calculator import PayrollRules, compute_payslip
 from . import models as api_models
 
+#: Candidate field -> the training column that gives it meaning. `city` only
+#: matters through the tier it maps to, which is why they share a column.
+CANDIDATE_FIELD_SOURCE: dict[str, str] = {
+    "years_experience": "years_experience",
+    "role": "role",
+    "education": "education",
+    "org_size": "org_size",
+    "remote": "remote",
+    "employment_type": "employment_type",
+    "level": "level",
+    "institute_tier": "institute_tier",
+    "prev_company_type": "prev_company_type",
+    "city": "location_tier",
+    "location_tier": "location_tier",
+    "skills": "skills",
+}
+
+
+def usable_fields_for(df: pd.DataFrame) -> tuple[str, ...]:
+    """Which candidate fields this training frame can actually teach.
+
+    A column that exists but is entirely null teaches nothing, so the test is
+    "has at least one real value", not "is present". The survey frame has no
+    location_tier at all; a frame that had the column but never filled it would
+    be just as useless and is caught by the same rule.
+    """
+    return tuple(
+        field
+        for field, column in CANDIDATE_FIELD_SOURCE.items()
+        if column in df.columns and df[column].notna().any()
+    )
+
+
 # ─────────────────────────────────────────────── where things live
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -185,6 +218,17 @@ class ModelBundle:
     holdout_coverage: float | None = None
     holdout_relative_width: float | None = None
 
+    #: Candidate fields the training data actually carried a value for.
+    #: A field absent here is INERT: the form will accept it, the model will
+    #: swallow it, and the prediction will not move by a rupee.
+    #:
+    #: This exists because the survey has no city, level, previous-company-type
+    #: or institute tier, so a model trained on it returns the same number for
+    #: Bangalore and Jaipur. Silently accepting an input that changes nothing is
+    #: a confident answer to a question the caller never actually asked, which
+    #: is the failure mode this whole project is built to avoid.
+    usable_fields: tuple[str, ...] = ()
+
     @property
     def known_categories(self) -> dict[str, list[object]]:
         """The category vocabularies frozen at fit time.
@@ -252,6 +296,7 @@ def train_bundle(
         n_train=len(split.train),
         holdout_coverage=report.coverage,
         holdout_relative_width=report.mean_relative_width,
+        usable_fields=usable_fields_for(df),
     )
 
 
@@ -673,9 +718,34 @@ class PredictionService:
             regime=rules.regime,
         )
 
-    @staticmethod
-    def _notes(candidate: api_models.Candidate) -> list[str]:
+    def _notes(self, candidate: api_models.Candidate) -> list[str]:
         notes: list[str] = []
+
+        # THE INERT-FIELD WARNING. The loaded model can only have learned from
+        # what its training data contained. Point this service at the public
+        # survey and city, level, previous-company-type and institute tier all
+        # become decorative: the form takes them, the frame carries them, and
+        # the prediction does not move by a rupee — Bangalore and Jaipur return
+        # the identical number.
+        #
+        # Accepting an input that changes nothing, and saying nothing, is a
+        # confident answer to a question the caller never actually asked. That
+        # is the failure this project exists to prevent, so it is reported.
+        usable = set(self.bundle.usable_fields)
+        if usable:  # empty means an older bundle that did not record them
+            ignored = [
+                f
+                for f in CANDIDATE_FIELD_SOURCE
+                if getattr(candidate, f, None) is not None and f not in usable
+            ]
+            if ignored:
+                notes.append(
+                    f"{', '.join(sorted(ignored))} had no effect on this prediction. "
+                    f"The loaded model was trained on {self.bundle.trained_on}, which "
+                    "carries no values for those fields, so it never learned what they "
+                    "mean. They were accepted and ignored — not silently, hence this note."
+                )
+
         if candidate.prev_salary is not None:
             notes.append(
                 "prev_salary was accepted and deliberately NOT used. Anchoring an offer "
