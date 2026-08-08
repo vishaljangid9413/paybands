@@ -1,0 +1,136 @@
+# Increment policy for Financial Year 2026-27
+#
+# THIS FILE IS THE POLICY. The code in src/paybands/policy/increment.py only
+# applies it. Every number below is a choice a company makes, not a fact
+# discovered in data — which is exactly why it lives in a YAML file an HR
+# partner can open, argue with, and change without touching Python.
+#
+# WHY ONE FILE PER FINANCIAL YEAR, NEVER EDITED ONCE WRITTEN:
+#   Next year you add increment_fy_2027_28.yaml. You do NOT edit this one.
+#   Six months after the cycle closes someone will ask "why did she get 13%?"
+#   The only honest answer is "here is the rule book we ran her through" — and
+#   that answer disappears the moment you edit last year's numbers. Same
+#   convention as configs/payroll/fy_YYYY_YY.yaml, same reason.
+#
+# HOW TO READ THE REST OF THIS FILE:
+#   A recommendation is built from up to three parts, then capped:
+#     merit      — earned by the performance rating
+#     equity     — earned by being paid below the band for your job
+#     promotion  — earned by a level change
+#   compa-ratio = actual salary ÷ midpoint of the predicted band. Below 0.90 is
+#   underpaid, 0.90-1.10 is in band, above 1.10 is overpaid. One division, and
+#   it drives everything below.
+
+financial_year: "2026-27"
+
+# Provenance. Not used in any calculation — but a policy that has forgotten who
+# approved it is a policy nobody can defend in a compensation committee.
+source: "ILLUSTRATIVE. Not approved by anyone. Replace with your own numbers."
+approved_by: null
+approved_on: null
+
+# ── The pool ────────────────────────────────────────────────────────
+budget:
+  # The total increment spend, as a fraction of current annual payroll. 10% is a
+  # plausible Indian tech figure for 2026-27 (market averages have been running
+  # 8-10%); your CFO sets the real one.
+  pct_of_payroll: 0.10
+
+  # WHEN THE RECOMMENDATIONS COST MORE THAN THE POOL — WHO GETS CUT FIRST?
+  # This is the single most contested line in the file, so it is a named,
+  # switchable choice rather than an accident of the code:
+  #
+  #   equity_first  Fund every equity correction (worst compa-ratio first),
+  #                 then share whatever is left across merit, pro rata.
+  #                 Rationale: underpayment is a mistake the company already
+  #                 made. Merit is a reward it is choosing to give. Fixing a
+  #                 mistake outranks giving a reward — and the people below band
+  #                 are the ones most likely to resign, so this is also the
+  #                 cheapest order in the long run.
+  #   merit_first   The opposite, and defensible: it protects the top performers
+  #                 you can least afford to lose, and some companies genuinely
+  #                 believe underpayment should be corrected off-cycle rather
+  #                 than out of the annual pool.
+  #   pro_rata      Scale everyone down by the same factor. Feels fair, treats
+  #                 an unfairness the company caused as equal in claim to a
+  #                 bonus it chose to award. Included because "obviously fair"
+  #                 deserves to be an option you rejected on purpose.
+  priority: equity_first
+
+# ── Merit: rating → money ───────────────────────────────────────────
+merit:
+  # A 1-5 scale. These percentages are of CURRENT salary, before anything else.
+  # The spread matters more than the level: 0% to 18% says performance is worth
+  # arguing about; 7% to 10% says the rating is theatre.
+  by_rating:
+    1: 0.00 # below expectations — no merit increase, by design
+    2: 0.04
+    3: 0.08 # meets expectations. The modal rating, so this sets the average.
+    4: 0.12
+    5: 0.18
+
+  # WHAT TO DO WITH SOMEONE WHO HAS NO RATING ON FILE.
+  # A new joiner mid-cycle, a transfer, a manager who never submitted the form.
+  #   assume_default  Treat them as `default_rating` and SAY SO in the reason
+  #                   string, so a human can spot the assumption and fix it.
+  #   no_merit        Give no merit at all until a rating exists.
+  # Either way the EQUITY correction still applies — being underpaid is a fact
+  # about the band, not about the rating, and withholding it because a form is
+  # missing punishes the wrong person.
+  on_missing_rating: assume_default
+  default_rating: 3
+
+# ── Compa-ratio thresholds ──────────────────────────────────────────
+# Standard HR vocabulary. See docs/design.md §4.2.
+# These are duplicated as constants in src/paybands/model/band.py for labelling
+# predictions; if you move them here, move them there too. This file is the
+# authority for anything that spends money.
+compa:
+  below_band: 0.90 # under this → underpaid, equity correction applies
+  above_band: 1.10 # over this → overpaid, merit is damped
+  hold_above: 1.25 # over this → no increase at all this year
+
+  # Above the band, merit is multiplied by this. 0.5 = half the normal increase.
+  # Not zero: a strong performer who happens to sit high in the band has still
+  # done the work, and zeroing them is how you lose them. The band catches up.
+  above_band_merit_multiplier: 0.5
+
+# ── Equity: correcting people paid below their band ─────────────────
+equity:
+  # Where we are aiming to land them. NOT 1.00 — the goal is to get people
+  # inside the band, not to move everyone to the middle of it, which would cost
+  # a fortune and erase every legitimate difference within the band.
+  target_compa_ratio: 0.95
+
+  # Close the gap over this many years, in equal slices.
+  # WHY NOT ALL AT ONCE: someone at 0.70 needs a 36% raise to reach 0.95. No
+  # compensation committee approves 36% in one line, so a rule that recommends
+  # it produces a recommendation that gets ignored — and ignored recommendations
+  # correct nobody. Two slices of 18% get approved and actually fix the problem.
+  close_gap_over_years: 2
+
+  # A hard ceiling on the equity slice in any one year, whatever the arithmetic
+  # says. Backstop for the extreme cases the division above does not tame.
+  max_single_year_correction_pct: 0.15
+
+# ── Promotion ───────────────────────────────────────────────────────
+promotion:
+  # A level change is a different-sized jump from an annual raise: the person is
+  # being paid against a new band, not moved along the old one. Added on top of
+  # merit. Where a promotion also moves the predicted band, the compa-ratio will
+  # drop against the NEW band and the equity rule picks up the rest next cycle.
+  uplift_pct: 0.12
+
+# ── Global limits ───────────────────────────────────────────────────
+limits:
+  # No single person's total increase may exceed this, however the parts add up.
+  # A 5-rated, below-band employee getting promoted could otherwise compute to
+  # 45%. When this binds, merit is trimmed first, then promotion, and the equity
+  # correction is protected last — same reasoning as budget.priority.
+  max_total_increase_pct: 0.35
+
+  # Round every rupee figure DOWN to a multiple of this. Down, never nearest:
+  # rounding up can push a set of recommendations past a budget they had just
+  # fitted inside, and "we broke the budget by rounding" is not a sentence
+  # anyone wants to say out loud.
+  round_down_to_nearest: 100
