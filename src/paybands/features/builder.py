@@ -107,7 +107,23 @@ CATEGORICAL_COLUMNS: tuple[str, ...] = (
 
 #: Numeric columns passed straight through when present. Short list on purpose:
 #: most numeric signal in this schema comes through the experience block.
-PASSTHROUGH_NUMERIC: tuple[str, ...] = ("performance_rating",)
+#:
+#: `survey_year` is here because pooling seven years of survey data without it
+#: is actively harmful. The median Indian salary in this survey doubled between
+#: 2019 (₹7.5L) and 2025 (₹15L); with no year column the model cannot tell a
+#: well-paid 2019 respondent from an underpaid 2024 one, so six years of real
+#: wage growth land in the residual and the band gets WIDER as data is added.
+PASSTHROUGH_NUMERIC: tuple[str, ...] = ("performance_rating", "survey_year")
+
+#: Numeric columns that must NOT be left as NaN when a caller omits them.
+#:
+#: A candidate being priced today has no survey year — they are not a survey
+#: response. Passing NaN would land them wherever LightGBM sends missing values,
+#: which is a weighted average of six years including 2019 prices. Filling with
+#: the newest year the model was trained on asks the question the caller
+#: actually means: what is this person worth at the most recent market we have
+#: evidence for.
+_FILL_WITH_TRAINING_MAX: frozenset[str] = frozenset({"survey_year"})
 
 #: Never features, whatever a loader hands us. See Decision 4.
 EXCLUDED_COLUMNS: frozenset[str] = frozenset({TARGET, "source", "gender", "age_band", "event_date"})
@@ -150,6 +166,7 @@ class FeatureBuilder:
         self.categorical_features_: list[str] = []
         self.category_levels_: dict[str, list[object]] = {}
         self.numeric_features_: list[str] = []
+        self.numeric_fill_: dict[str, float] = {}
 
     # ── fit ────────────────────────────────────────────────────────────
 
@@ -173,6 +190,14 @@ class FeatureBuilder:
         self.numeric_features_ = [
             col for col in PASSTHROUGH_NUMERIC if col in df.columns and col not in EXCLUDED_COLUMNS
         ]
+        # Learned from the TRAINING split only, like every other vocabulary here.
+        # Taking the max over the whole frame would leak the test split's newest
+        # year into how training rows are encoded.
+        self.numeric_fill_ = {
+            col: pd.to_numeric(df[col], errors="coerce").max()
+            for col in self.numeric_features_
+            if col in _FILL_WITH_TRAINING_MAX
+        }
         if self.include_prev_salary and "prev_salary" in df.columns:
             self.numeric_features_.append("prev_salary")
 
@@ -238,9 +263,14 @@ class FeatureBuilder:
         out = pd.DataFrame(index=df.index)
         for col in self.numeric_features_:
             if col in df.columns:
-                out[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
+                values = pd.to_numeric(df[col], errors="coerce").astype("float64")
             else:
-                out[col] = np.nan
+                values = pd.Series(np.nan, index=df.index, dtype="float64")
+            # Frozen at fit time, so a prediction is dated by the training data
+            # rather than by whenever the code happens to run.
+            if col in _FILL_WITH_TRAINING_MAX:
+                values = values.fillna(self.numeric_fill_.get(col, np.nan))
+            out[col] = values
         return out
 
     # ── convenience ────────────────────────────────────────────────────

@@ -470,3 +470,47 @@ def test_round_trip_on_the_real_survey():
     known = x_train["years_experience"].notna()
     assert known.mean() > 0.5
     assert np.isfinite(x_train.loc[known, "experience_log"]).all()
+
+
+# ── survey_year ───────────────────────────────────────────────────────
+#
+# Pooling 2019-2025 is only safe because the model can see which year a row came
+# from — Indian salaries in this survey roughly doubled over that span. These
+# tests pin the two halves of that: the column reaches the model, and a caller
+# who has no survey year (a live candidate is not a survey response) is dated to
+# the newest market the model actually has evidence for.
+
+
+def test_survey_year_reaches_the_model(train_df):
+    builder = FeatureBuilder().fit(train_df.assign(survey_year=2019))
+    assert "survey_year" in builder.feature_names_
+
+
+def test_a_candidate_without_a_survey_year_is_priced_at_the_newest_year(train_df):
+    """Not NaN, and not today's date either.
+
+    NaN would send the row wherever LightGBM happens to route missing values —
+    an average across seven years, including 2019 prices that are half current
+    ones. Filling from the TRAINING data (rather than the system clock) also
+    keeps the answer reproducible: the same artifact gives the same prediction
+    next year, instead of silently drifting into years it has no data for.
+    """
+    trained = train_df.assign(survey_year=[2019, 2020, 2021, 2022, 2023, 2024])
+    builder = FeatureBuilder().fit(trained)
+
+    candidate = train_df.head(1).drop(columns=[TARGET])  # no survey_year at all
+    assert builder.transform(candidate)["survey_year"].iloc[0] == 2024
+
+
+def test_the_fill_year_is_learned_from_train_only(train_df, test_df):
+    """Same leakage rule as every other vocabulary in this builder.
+
+    Taking the max across the whole frame would let a newer year present only in
+    the test split decide how training rows are encoded.
+    """
+    trained = train_df.assign(survey_year=2022)
+    builder = FeatureBuilder().fit(trained)
+
+    later = test_df.assign(survey_year=2025)
+    builder.transform(later)  # must not change what the builder learned
+    assert builder.numeric_fill_["survey_year"] == 2022

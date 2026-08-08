@@ -78,6 +78,43 @@ DATASETS: tuple[Dataset, ...] = (
         licence="ODbL 1.0",
         why="49,191 responses; 1,022 usable Indian salary rows after cleaning",
     ),
+    # ── Earlier years, for one reason: 1,022 rows is why the bands are 240% wide.
+    #
+    # Pooling 2019-2024 adds roughly 15,000 more usable Indian rows. It does NOT
+    # fix the missing city/employer/level columns — those were checked and do not
+    # exist in any year — so this buys sample size, not new features.
+    #
+    # It also brings a hazard worth naming before anyone pools these naively: the
+    # median clean Indian salary in this survey runs 7.2L (2019) -> 15L (2024).
+    # That is real wage growth, and treating six years as one undifferentiated
+    # pool would fold it into the spread and make the bands WIDER, not narrower.
+    # Survey year has to be handled explicitly.
+    #
+    # These use the `media.githubusercontent.com/media/` host on purpose. The
+    # ordinary `raw.githubusercontent.com` path returns a 134-byte Git-LFS
+    # pointer that looks like a successful download and fails much later, during
+    # parsing, a long way from the cause.
+    *(
+        Dataset(
+            name=f"Stack Overflow Developer Survey {year}",
+            filename=f"so_{year}_raw.csv",
+            url=(
+                "https://media.githubusercontent.com/media/StackExchange/Survey"
+                f"/main/packages/archive/{year}/results.csv"
+            ),
+            approx_mb=mb,
+            licence="ODbL 1.0",
+            why=why,
+        )
+        for year, mb, why in (
+            (2019, 196, "88,883 responses; ~3,730 usable Indian salary rows"),
+            (2020, 95, "64,461 responses; ~2,497 usable Indian salary rows"),
+            (2021, 81, "83,439 responses; ~3,642 usable Indian salary rows"),
+            (2022, 109, "73,268 responses; ~2,045 usable Indian salary rows"),
+            (2023, 159, "89,184 responses; ~1,799 usable Indian salary rows"),
+            (2024, 160, "65,437 responses; ~1,446 usable Indian salary rows"),
+        )
+    ),
 )
 
 

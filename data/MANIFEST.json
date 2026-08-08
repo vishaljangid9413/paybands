@@ -2,6 +2,78 @@
   "note": "Provenance for files under data/. The files themselves are gitignored (large, not ours, reproducible); this record is committed so any published number can be traced to exact bytes. Regenerate with: uv run python scripts/fetch_data.py",
   "datasets": [
     {
+      "name": "Stack Overflow Developer Survey 2019",
+      "filename": "so_2019_raw.csv",
+      "path": "data/public/so_2019_raw.csv",
+      "url": "https://media.githubusercontent.com/media/StackExchange/Survey/main/packages/archive/2019/results.csv",
+      "licence": "ODbL 1.0",
+      "why": "88,883 responses; ~3,730 usable Indian salary rows",
+      "bytes": 196592730,
+      "sha256": "4b2e6f54b54fb1a28ace74aaa8a51892221023572ddc52b4e2b41627fb233740",
+      "first_fetched": "2026-08-09",
+      "last_checked": "2026-08-09"
+    },
+    {
+      "name": "Stack Overflow Developer Survey 2020",
+      "filename": "so_2020_raw.csv",
+      "path": "data/public/so_2020_raw.csv",
+      "url": "https://media.githubusercontent.com/media/StackExchange/Survey/main/packages/archive/2020/results.csv",
+      "licence": "ODbL 1.0",
+      "why": "64,461 responses; ~2,497 usable Indian salary rows",
+      "bytes": 94603888,
+      "sha256": "a1206c0d33c8fc717eccbbad0cb3b06e2942893eaa408b00492dbbaed937a500",
+      "first_fetched": "2026-08-09",
+      "last_checked": "2026-08-09"
+    },
+    {
+      "name": "Stack Overflow Developer Survey 2021",
+      "filename": "so_2021_raw.csv",
+      "path": "data/public/so_2021_raw.csv",
+      "url": "https://media.githubusercontent.com/media/StackExchange/Survey/main/packages/archive/2021/results.csv",
+      "licence": "ODbL 1.0",
+      "why": "83,439 responses; ~3,642 usable Indian salary rows",
+      "bytes": 81101949,
+      "sha256": "1ba4560d4cf84756ad7d0f88f796a1cf5c0abded14e7637fa4e7db3bcd3b5126",
+      "first_fetched": "2026-08-09",
+      "last_checked": "2026-08-09"
+    },
+    {
+      "name": "Stack Overflow Developer Survey 2022",
+      "filename": "so_2022_raw.csv",
+      "path": "data/public/so_2022_raw.csv",
+      "url": "https://media.githubusercontent.com/media/StackExchange/Survey/main/packages/archive/2022/results.csv",
+      "licence": "ODbL 1.0",
+      "why": "73,268 responses; ~2,045 usable Indian salary rows",
+      "bytes": 108829270,
+      "sha256": "adcbfc17e2a91bb8fe5e09665c55e20df3b5b7c69f2cdbad1f6c3771e220f034",
+      "first_fetched": "2026-08-09",
+      "last_checked": "2026-08-09"
+    },
+    {
+      "name": "Stack Overflow Developer Survey 2023",
+      "filename": "so_2023_raw.csv",
+      "path": "data/public/so_2023_raw.csv",
+      "url": "https://media.githubusercontent.com/media/StackExchange/Survey/main/packages/archive/2023/results.csv",
+      "licence": "ODbL 1.0",
+      "why": "89,184 responses; ~1,799 usable Indian salary rows",
+      "bytes": 158626799,
+      "sha256": "828874a3cf0fa1bbb4c3da6a87e5822b8563bbc04b21f9869479480dbcff410c",
+      "first_fetched": "2026-08-09",
+      "last_checked": "2026-08-09"
+    },
+    {
+      "name": "Stack Overflow Developer Survey 2024",
+      "filename": "so_2024_raw.csv",
+      "path": "data/public/so_2024_raw.csv",
+      "url": "https://media.githubusercontent.com/media/StackExchange/Survey/main/packages/archive/2024/results.csv",
+      "licence": "ODbL 1.0",
+      "why": "65,437 responses; ~1,446 usable Indian salary rows",
+      "bytes": 159525875,
+      "sha256": "7f2c2dbf6989d00b80a7351de4bb3af4b52b21cc52d5c947891bbc4f4e5cbe49",
+      "first_fetched": "2026-08-09",
+      "last_checked": "2026-08-09"
+    },
+    {
       "name": "Stack Overflow Developer Survey 2025",
       "filename": "so_2025_raw.csv",
       "path": "data/public/so_2025_raw.csv",
